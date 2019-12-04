@@ -10,7 +10,7 @@ from openmc.data.reconstruct import penetration_shift, wave_number
 
 def ladder(urr):
     """Generate a resonance ladder spanning the entire unresolved resonance
-    range. 
+    range.
 
     Parameters
     ----------
@@ -25,15 +25,15 @@ def ladder(urr):
     """
     lad = []
     ljs = []
-    
+
     for row in urr.parameters.itertuples():
         # New spin sequence (l, j)
         if (row.L, row.J) not in ljs:
             ljs.append((row.L, row.J))
-            
+
             # Select a starting energy for this spin sequence
             energy = urr.energy_min + random() * row.d
-            
+
         if urr.energies and row.E < urr.energy_max:
             # Get the next row to interpolate energy-dependent parameters
             row1 = urr.parameters.iloc[row.Index + 1]
@@ -46,7 +46,7 @@ def ladder(urr):
             avg_gg = row.gg
             avg_gf = 0
             avg_gx = 0
-            
+
         while energy < urr.energy_max:
             # Interpolate energy-dependent parameters
             if urr.energies:
@@ -63,21 +63,21 @@ def ladder(urr):
                     avg_gx = row.gx + f*(row1.gx - row.gx)
                 else:
                     avg_gx = 0
-            
+
             # Sample fission width
             if avg_gf == 0:
                 gf = 0
             else:
                 xf = np.random.chisquare(avg_amuf)
                 gf = xf*avg_gf/avg_amuf
-            
+
             # Sample competitive width
             if avg_gx == 0:
                 gx = 0
             else:
                 xx = np.random.chisquare(avg_amux)
                 gx = xx*avg_gx/avg_amux
-            
+
             # Calculate energy-dependent neutron width
             xn0 = np.random.chisquare(avg_amun)
             k = wave_number(urr.atomic_weight_ratio, energy)
@@ -87,19 +87,19 @@ def ladder(urr):
 
             # Calculate total width
             gt = gn + avg_gg + gf + gx
-            
+
             # Sample level spacing
             d = avg_d*sqrt(-4*log(random())/pi)
-            
+
             # Update resonance parameters and energy
             lad.append((energy, row.L, row.J, gt, gn, avg_gg, gf, gx))
-            energy += d            
-        
+            energy += d
+
             # If the parameters are energy-dependent (Case C) or fission widths are
             # energy-dependent (Case B), get the parameters for the next energy bin
             # for this spin sequence
             if urr.energies and energy > row1.E:
-                continue
+                break
 
     return lad
 
