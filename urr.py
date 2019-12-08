@@ -10,7 +10,7 @@ from openmc.data.reconstruct import penetration_shift, wave_number
 
 def ladder(urr):
     """Generate a resonance ladder spanning the entire unresolved resonance
-    range. 
+    range.
 
     Parameters
     ----------
@@ -25,81 +25,105 @@ def ladder(urr):
     """
     lad = []
     ljs = []
-    
-    for row in urr.parameters.itertuples():
-        # New spin sequence (l, j)
-        if (row.L, row.J) not in ljs:
-            ljs.append((row.L, row.J))
-            
-            # Select a starting energy for this spin sequence
-            energy = urr.energy_min + random() * row.d
-            
-        if urr.energies and row.E < urr.energy_max:
-            # Get the next row to interpolate energy-dependent parameters
-            row1 = urr.parameters.iloc[row.Index + 1]
+
+    params = urr.parameters
+    energy_min = urr.energy_min
+    energy_max = urr.energy_max
+
+    if 'amux' in params.columns:
+        case = 'C'
+    elif 'amuf' in params.columns:
+        case = 'B'
+    else:
+        case = 'A'
+
+    def expand_row_params(idx):
+        row = params.iloc[idx]
+        if case == 'A':
+            # Case A fission widths not given, all parameters energy-independent
+            l, j, d, amun, gn0, gg = row
+            E = gf = gx = amux = amuf = 0.0
+        elif case == 'B':
+            # Case B: fission widths given, only fission widths energy-dependent
+            l, j, E, d, amun, amuf, gn0, gg, gf = row
+            gx = amux = 0.0
         else:
+            # Case C: fission widths given, all parameters energy-dependent
+            l, j, E, d, amux, amun, amuf, gx, gn0, gg, gf = row
+        return l, j, E, d, amux, amun, amuf, gx, gn0, gg, gf
+
+    for row in params.itertuples():
+        # Do attribute access up front
+        l, j, E_l, d_l, amux_l, amun_l, amuf_l, gx_l, gn0_l, gg_l, gf_l = expand_row_params(row.Index)
+        if urr.energies and E_l < energy_max:
+            E_r, d_r, amux_r, amun_r, amuf_r, gx_r, gn0_r, gg_r, gf_r = expand_row_params(row.Index + 1)[2:]
+
+        # New spin sequence (l, j)
+        if (l, j) not in ljs:
+            ljs.append((l, j))
+
+            # Select a starting energy for this spin sequence
+            energy = energy_min + random() * d_l
+
+        if case == 'A':
             # Get the parameters for this spin sequence if they are not
             # energy-dependent (case A). There is no competitive width.
-            avg_d = row.d
-            avg_amun = row.amun
-            avg_gn0 = row.gn0
-            avg_gg = row.gg
+            avg_d = d_l
+            avg_amun = amun_l
+            avg_gn0 = gn0_l
+            avg_gg = gg_l
             avg_gf = 0
             avg_gx = 0
-            
-        while energy < urr.energy_max:
+
+        while energy < energy_max:
             # Interpolate energy-dependent parameters
             if urr.energies:
-                f = (energy - row.E)/(row1.E - row.E)
-                avg_d = row.d + f*(row1.d - row.d)
-                avg_amun = row.amun + f*(row1.amun - row.amun)
-                avg_amuf = row.amuf + f*(row1.amuf - row.amuf)
-                if 'amux' in urr.parameters.columns:
-                    avg_amux = row.amux + f*(row1.amux - row.amux)
-                avg_gn0 = row.gn0 + f*(row1.gn0 - row.gn0)
-                avg_gg = row.gg + f*(row1.gg - row.gg)
-                avg_gf = row.gf + f*(row1.gf - row.gf)
-                if 'gx' in urr.parameters.columns:
-                    avg_gx = row.gx + f*(row1.gx - row.gx)
-                else:
-                    avg_gx = 0
-            
+                f = (energy - E_l)/(E_r - E_l)
+                avg_d = d_l + f*(d_r - d_l)
+                avg_amun = amun_l + f*(amun_r - amun_l)
+                avg_amuf = amuf_l + f*(amuf_r - amuf_l)
+                avg_amux = amux_l + f*(amux_r - amux_l)
+                avg_gn0 = gn0_l + f*(gn0_r - gn0_l)
+                avg_gg = gg_l + f*(gg_r - gg_l)
+                avg_gf = gf_l + f*(gf_r - gf_l)
+                avg_gx = gx_l + f*(gx_r - gx_l)
+
             # Sample fission width
             if avg_gf == 0:
                 gf = 0
             else:
                 xf = np.random.chisquare(avg_amuf)
                 gf = xf*avg_gf/avg_amuf
-            
+
             # Sample competitive width
             if avg_gx == 0:
                 gx = 0
             else:
                 xx = np.random.chisquare(avg_amux)
                 gx = xx*avg_gx/avg_amux
-            
+
             # Calculate energy-dependent neutron width
             xn0 = np.random.chisquare(avg_amun)
             k = wave_number(urr.atomic_weight_ratio, energy)
             rho = k*urr.channel_radius(energy)
-            p_l, s_l = penetration_shift(row.L, rho)
+            p_l, _ = penetration_shift(l, rho)
             gn = p_l/rho*sqrt(energy)*xn0*avg_gn0
 
             # Calculate total width
             gt = gn + avg_gg + gf + gx
-            
+
             # Sample level spacing
             d = avg_d*sqrt(-4*log(random())/pi)
-            
+
             # Update resonance parameters and energy
-            lad.append((energy, row.L, row.J, gt, gn, avg_gg, gf, gx))
-            energy += d            
-        
+            lad.append((energy, l, j, gt, gn, avg_gg, gf, gx))
+            energy += d
+
             # If the parameters are energy-dependent (Case C) or fission widths are
             # energy-dependent (Case B), get the parameters for the next energy bin
             # for this spin sequence
-            if urr.energies and energy > row1.E:
-                continue
+            if urr.energies and energy > E_r:
+                break
 
     return lad
 
