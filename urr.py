@@ -25,10 +25,14 @@ def ladder(urr):
     """
     lad = []
     ljs = []
-
     params = urr.parameters
-    energy_min = urr.energy_min
-    energy_max = urr.energy_max
+
+    # Keep ~300 resonances on either end of the unresolved resonance range to
+    # avoid truncation effects
+    d_min = params['d'].iloc[0]
+    d_max = params['d'].iloc[-1]
+    energy_min = max(urr.energy_min - 300 * d_min, 1e-1)
+    energy_max = urr.energy_max + 300 * d_max
 
     if 'amux' in params.columns:
         case = 'C'
@@ -55,8 +59,6 @@ def ladder(urr):
     for row in params.itertuples():
         # Do attribute access up front
         l, j, E_l, d_l, amux_l, amun_l, amuf_l, gx_l, gn0_l, gg_l, gf_l = expand_row_params(row.Index)
-        if urr.energies and E_l < energy_max:
-            E_r, d_r, amux_r, amun_r, amuf_r, gx_r, gn0_r, gg_r, gf_r = expand_row_params(row.Index + 1)[2:]
 
         # New spin sequence (l, j)
         if (l, j) not in ljs:
@@ -64,6 +66,12 @@ def ladder(urr):
 
             # Select a starting energy for this spin sequence
             energy = energy_min + random() * d_l
+
+        if urr.energies:
+            if energy < urr.energy_min or E_l >= urr.energy_max:
+                E_r, d_r, amux_r, amun_r, amuf_r, gx_r, gn0_r, gg_r, gf_r = expand_row_params(row.Index)[2:]
+            else:
+                E_r, d_r, amux_r, amun_r, amuf_r, gx_r, gn0_r, gg_r, gf_r = expand_row_params(row.Index + 1)[2:]
 
         if case == 'A':
             # Get the parameters for this spin sequence if they are not
@@ -78,7 +86,10 @@ def ladder(urr):
         while energy < energy_max:
             # Interpolate energy-dependent parameters
             if urr.energies:
-                f = (energy - E_l)/(E_r - E_l)
+                if E_r == E_l:
+                    f = 0
+                else:
+                    f = (energy - E_l)/(E_r - E_l)
                 avg_d = d_l + f*(d_r - d_l)
                 avg_amun = amun_l + f*(amun_r - amun_l)
                 avg_amuf = amuf_l + f*(amuf_r - amuf_l)
@@ -122,7 +133,7 @@ def ladder(urr):
             # If the parameters are energy-dependent (Case C) or fission widths are
             # energy-dependent (Case B), get the parameters for the next energy bin
             # for this spin sequence
-            if urr.energies and energy > E_r:
+            if urr.energies and energy > E_r and E_l < urr.energy_max:
                 break
 
     return lad
